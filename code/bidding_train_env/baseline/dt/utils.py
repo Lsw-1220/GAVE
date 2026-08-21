@@ -27,7 +27,12 @@ class EpisodeReplayBuffer(Dataset):
 
         self.state_dim = state_dim
         self.act_dim = act_dim
-        training_data = pd.read_csv(data_path)
+        data_paths = [data_path] if isinstance(data_path, (str, bytes)) else list(data_path)
+        if not data_paths:
+            raise ValueError("At least one training dataset path is required")
+        training_data = pd.concat(
+            [pd.read_csv(path) for path in data_paths], ignore_index=True
+        )
 
         def safe_literal_eval(val):
             if pd.isna(val):

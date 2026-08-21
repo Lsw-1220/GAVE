@@ -13,14 +13,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def run_dt(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_data.csv", save_step=5000, model_param={},
+def run_dt(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_data.csv", save_step=5000, model_param=None,
            batch_size=32, save_dir="saved_model/DTtest", loss_report=2):
     train_model(device, step_num, dir=dir, save_step=save_step, model_param=model_param, batch_size=batch_size,
                 save_dir=save_dir, loss_report=loss_report)
 
 
-def train_model(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_data.csv", save_step=5000, model_param={},
+def train_model(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_data.csv", save_step=5000, model_param=None,
                 batch_size=32, save_dir="saved_model/DTtest", loss_report=2):
+    if model_param is None:
+        model_param = {}
+    if step_num <= 0:
+        raise ValueError("step_num must be greater than zero")
+    if save_step <= 0:
+        raise ValueError("save_step must be greater than zero")
     state_dim=16
     replay_buffer = EpisodeReplayBuffer(16, 1, data_path=dir)
     save_normalize_dict({"state_mean": replay_buffer.state_mean, "state_std": replay_buffer.state_std},
@@ -60,6 +66,8 @@ def train_model(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_
         model.scheduler.step()
         if i % save_step == 0:
             model.save_net(save_dir, "{}.pt".format(str(i)))
+    if i % save_step != 0:
+        model.save_net(save_dir, "{}.pt".format(str(i)))
     test_state = np.ones(state_dim, dtype=np.float32)
     logger.info(f"Test action: {model.take_actions(test_state)}")
 

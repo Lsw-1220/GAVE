@@ -26,7 +26,23 @@
 
 - Run:  
 
-  ```python code/main/main_train_test.py```
+  ```bash
+  python code/main/main_train_test.py \
+    --train_csvs ../data/trajectory/train-1.csv ../data/trajectory/train-2.csv \
+    --test_csv ../data/traffic/period-7.csv \
+    --save_step 5000 \
+    --result_file ./log/period-7-results.csv
+  ```
+
+  `--train_csvs` accepts one or more CSV files and trains on all their rows.
+  Every `--save_step` steps a checkpoint is saved; after training, every saved
+  checkpoint is evaluated on `--test_csv` and appended to `--result_file`.
+
+  Paper-reported defaults are used for GAVE: 400,000 training steps, batch size
+  128, learning rate 1e-5 with AdamW, 8 transformer layers, 16 attention heads,
+  and expectile 0.99. Hyperparameters not explicitly disclosed in the paper
+  retain the reference implementation's defaults.
+
 
 # Note
 The loss function in the original paper is highly sensitive to the hyperparameters, so it requires careful adjustment to achieve good results. This might be because the accuracy of the estimation of the value function significantly affects the model performance.
