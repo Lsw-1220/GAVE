@@ -29,14 +29,13 @@
   ```bash
   python code/main/main_train_test.py \
     --train_csvs ../data/trajectory/train-1.csv ../data/trajectory/train-2.csv \
-    --test_csv ../data/traffic/period-7.csv \
     --save_step 5000 \
-    --result_file ./log/period-7-results.csv
+    --save_dir ./saved_model/gave_400k
   ```
 
   `--train_csvs` accepts one or more CSV files and trains on all their rows.
-  Every `--save_step` steps a checkpoint is saved; after training, every saved
-  checkpoint is evaluated on `--test_csv` and appended to `--result_file`.
+  Every `--save_step` steps a checkpoint is saved. The training entry point
+  does not run offline evaluation.
 
   Paper-reported defaults are used for GAVE: 400,000 training steps, batch size
   128, learning rate 1e-5 with AdamW, 8 transformer layers, 16 attention heads,

@@ -48,7 +48,7 @@ class CausalSelfAttention(nn.Module):
         att = torch.where(self.bias[:, :, :T, :T].bool(), att, self.masked_bias.to(att.dtype))
         att = att + mask
         att = F.softmax(att, dim=-1)
-        self._attn_map = att.clone()
+        # Avoid retaining the attention autograd graph between microbatches.
         att = self.attn_drop(att)
         y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -250,7 +250,7 @@ class GAVE(nn.Module):
             states, actions, rewards, curr_score, timesteps, attention_mask=attention_mask, **kwargs)
         return action_preds[0, -1]
 
-    def step(self, states, actions, rewards, dones, all_reward, curr_score, timesteps, attention_mask, next_states):
+    def step(self, states, actions, rewards, dones, all_reward, curr_score, timesteps, attention_mask, next_states, loss_scale=1.0, update=True, zero_grad=True):
         action_target, curr_score_target = torch.clone(actions).detach(), torch.clone(curr_score).detach()
         state_target = torch.clone(next_states).detach()
         curr_score_target = curr_score_target[:, 1:]
@@ -293,14 +293,17 @@ class GAVE(nn.Module):
         loss4 = torch.mean((curr_score_preds_1 - value_preds_frozen) ** 2) * 100
         loss = loss1 + loss2 + loss3 + loss4
         
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), .25)
-        self.optimizer.step()
+        if zero_grad:
+            self.optimizer.zero_grad(set_to_none=True)
+        (loss * loss_scale).backward()
+        if update:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), .25)
+            self.optimizer.step()
         return (loss.detach().cpu().item(), loss1.detach().cpu().item(), loss2.detach().cpu().item(), loss3.detach().cpu().item(),
                 loss4.detach().cpu().item(), torch.mean(wo_frozen.squeeze()).cpu().item(), torch.mean(curr_score_target).cpu().item(),
                 torch.mean(curr_score_preds).cpu().item(), torch.mean(curr_score_preds_1).cpu().item())
 
+    @torch.no_grad()
     def take_actions(self, state, target_return=None, pre_reward=None, budget=100, cpa=2):
         self.eval()
         target_return = target_return.to(self.device) if target_return is not None else self.target_return

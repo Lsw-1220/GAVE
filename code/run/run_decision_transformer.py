@@ -1,8 +1,8 @@
 import numpy as np
 from bidding_train_env.common.utils import normalize_state, normalize_reward, save_normalize_dict
-from bidding_train_env.baseline.dt.utils import EpisodeReplayBuffer
+from bidding_train_env.baseline.dt.disk_buffer import DiskReplayBuffer
 from bidding_train_env.baseline.dt.dt import GAVE
-from torch.utils.data import DataLoader, WeightedRandomSampler
+import torch
 import logging
 import pickle
 
@@ -27,8 +27,14 @@ def train_model(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_
         raise ValueError("step_num must be greater than zero")
     if save_step <= 0:
         raise ValueError("save_step must be greater than zero")
+    if str(device).startswith('cuda') and not torch.cuda.is_available():
+        raise RuntimeError('CUDA is unavailable in this Python environment. Use a CUDA-enabled PyTorch environment or --device cpu.')
+    if loss_report <= 0:
+        raise ValueError('loss_report must be positive')
     state_dim=16
-    replay_buffer = EpisodeReplayBuffer(16, 1, data_path=dir)
+    replay_buffer = DiskReplayBuffer(16, 1, data_path=dir,
+        cache_dir=model_param.get("train_cache_dir", "./train_cache"),
+        chunksize=model_param.get("csv_chunksize", 10000))
     save_normalize_dict({"state_mean": replay_buffer.state_mean, "state_std": replay_buffer.state_std},
                         save_dir)
     logger.info(f"Replay buffer size: {len(replay_buffer.trajectories)}")
@@ -42,32 +48,33 @@ def train_model(device="cpu", step_num=10000, dir="./data/trajectory/trajectory_
                                 learning_rate=model_param["learning_rate"], time_dim=model_param['time_dim'],
                                 block_config=model_param['block_config'], expectile=model_param['expectile']
                                 ).to(device)
-    step_num = step_num
-    batch_size = batch_size
-    sampler = WeightedRandomSampler(replay_buffer.p_sample, num_samples=step_num * batch_size, replacement=True)
-    dataloader = DataLoader(replay_buffer, sampler=sampler, batch_size=batch_size)
-
+    micro_batch_size = model_param.get('micro_batch_size', 4)
+    if batch_size <= 0 or micro_batch_size <= 0:
+        raise ValueError('Batch sizes must be positive')
     model.train()
-    i=0
-    for states, actions, rewards, dones, all_reward, curr_score, timesteps, attention_mask, next_states in dataloader:
-        states, actions, rewards, dones, all_reward, curr_score, timesteps, attention_mask, next_states = (states.to(device),
-                                                                                        actions.to(device),
-                                                                           rewards.to(device), dones.to(device), all_reward.to(device),
-                                                                           curr_score.to(device), timesteps.to(device),
-                                                                           attention_mask.to(device),
-                                                                           next_states.to(device))
-
-        train_loss = model.step(states, actions, rewards, dones, all_reward, curr_score, timesteps, attention_mask, next_states)
-        i+=1
+    for step in range(step_num):
+        # Collate only one effective batch on CPU; transfer one microbatch at a time.
+        batch = replay_buffer.sample(batch_size)
+        total_tokens = batch[7].sum().item()
+        train_loss = np.zeros(9)
+        for start in range(0, batch_size, micro_batch_size):
+            end = min(start + micro_batch_size, batch_size)
+            micro = tuple(t[start:end].to(device) for t in batch)
+            weight = micro[7].sum().item() / total_tokens
+            metrics = model.step(*micro, loss_scale=weight,
+                                 zero_grad=(start == 0), update=(end == batch_size))
+            train_loss += np.asarray(metrics) * weight
+        i = step + 1
         if i%loss_report==0:
             logger.info("Step: {}, All loss: {}, loss1: {}, loss2: {}, loss3: {}, loss4: {}, w: {}, score_target: {}, score_preds: {}, score_preds1: {}"
                         .format(i, train_loss[0], train_loss[1], train_loss[2], train_loss[3], train_loss[4],
                                 train_loss[5], train_loss[6], train_loss[7], train_loss[8]))
         model.scheduler.step()
         if i % save_step == 0:
-            model.save_net(save_dir, "{}.pt".format(str(i)))
+            model.save_net(save_dir, "step_{}.pt".format(i))
     if i % save_step != 0:
-        model.save_net(save_dir, "{}.pt".format(str(i)))
+        model.save_net(save_dir, "step_{}.pt".format(i))
+    replay_buffer.db.close()
     test_state = np.ones(state_dim, dtype=np.float32)
     logger.info(f"Test action: {model.take_actions(test_state)}")
 

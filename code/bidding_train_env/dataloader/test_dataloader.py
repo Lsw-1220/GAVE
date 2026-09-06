@@ -8,29 +8,40 @@ warnings.filterwarnings('ignore')
 
 
 class TestDataLoader:
-    def __init__(self, file_path="./data/log.csv"):
+    def __init__(self, file_path="./data/log.csv", cache_dir=None):
         self.file_path = file_path
-        self.raw_data_path = os.path.join(os.path.dirname(file_path), "raw_data.pickle")
-        self.raw_data = self._get_raw_data()
-        self.keys, self.test_dict = self._get_test_data_dict()
-
-    def _get_raw_data(self):
-        if os.path.exists(self.raw_data_path):
-            with open(self.raw_data_path, 'rb') as file:
-                return pickle.load(file)
-        else:
-            tem = pd.read_csv(self.file_path)
-            with open(self.raw_data_path, 'wb') as file:
-                pickle.dump(tem, file)
-            return tem
-
-    def _get_test_data_dict(self):
-        grouped_data = self.raw_data.sort_values('timeStepIndex').groupby(['deliveryPeriodIndex', 'advertiserNumber'])
-        data_dict = {key: group for key, group in grouped_data}
-        return list(data_dict.keys()), data_dict
+        cache_dir = cache_dir or os.path.dirname(file_path)
+        os.makedirs(cache_dir, exist_ok=True)
+        import hashlib
+        import sqlite3
+        stat = os.stat(file_path)
+        signature = f'{os.path.abspath(file_path)}:{stat.st_size}:{stat.st_mtime_ns}:v1'
+        key = hashlib.sha256(signature.encode()).hexdigest()[:20]
+        target = os.path.join(cache_dir, key + '.sqlite')
+        if not os.path.exists(target):
+            temporary = target + '.building'
+            if os.path.exists(temporary):
+                os.remove(temporary)
+            db = sqlite3.connect(temporary)
+            columns = ['deliveryPeriodIndex', 'advertiserNumber', 'timeStepIndex',
+                       'pValue', 'pValueSigma', 'leastWinningCost', 'budget',
+                       'CPAConstraint', 'advertiserCategoryIndex']
+            for chunk in pd.read_csv(file_path, usecols=columns, chunksize=10000):
+                chunk.to_sql('traffic', db, if_exists='append', index=False)
+            db.execute('CREATE INDEX episode ON traffic(deliveryPeriodIndex, advertiserNumber, timeStepIndex)')
+            db.commit()
+            db.close()
+            os.replace(temporary, target)
+        self.db = sqlite3.connect(target)
+        self.keys = self.db.execute('SELECT DISTINCT deliveryPeriodIndex, advertiserNumber FROM traffic ORDER BY deliveryPeriodIndex, advertiserNumber').fetchall()
+        if not self.keys:
+            raise ValueError('Empty offline test dataset')
+        self.test_dict = None
 
     def mock_data(self, key):
-        data = self.test_dict[key]
+        data = pd.read_sql_query(
+            'SELECT * FROM traffic WHERE deliveryPeriodIndex=? AND advertiserNumber=? ORDER BY timeStepIndex, rowid',
+            self.db, params=key)
         pValues = data.groupby('timeStepIndex')['pValue'].apply(list).apply(np.array).tolist()
         pValueSigmas = data.groupby('timeStepIndex')['pValueSigma'].apply(list).apply(np.array).tolist()
         leastWinningCosts = data.groupby('timeStepIndex')['leastWinningCost'].apply(list).apply(np.array).tolist()

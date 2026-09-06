@@ -5,7 +5,6 @@ from bidding_train_env.strategy import PlayerBiddingStrategy
 from bidding_train_env.dataloader.test_dataloader import TestDataLoader
 from bidding_train_env.environment.offline_env import OfflineEnv
 import pandas as pd
-import datatable as dt
 
 # Configure logging
 logging.basicConfig(
@@ -37,10 +36,15 @@ def getScore1_nips(reward, cpa, cpa_constraint):
     return penalty * reward
 
 
-def run_test(file_path='./data/traffic/period-7.csv', model_name="dt.pt", model_param={}):
+def run_test(file_path='./data/traffic/period-7.csv', model_name="dt.pt", model_param=None, data_loader=None):
+    if model_param is None:
+        model_param = {}
 
-
-    data_loader = TestDataLoader(file_path=file_path)
+    if data_loader is None:
+        data_loader = TestDataLoader(
+            file_path=file_path,
+            cache_dir=model_param.get("test_cache_dir"),
+        )
 
 
     env = OfflineEnv()
@@ -53,7 +57,6 @@ def run_test(file_path='./data/traffic/period-7.csv', model_name="dt.pt", model_
         num_timeStepIndex, pValues, pValueSigmas, leastWinningCosts, budget, cpa, category = data_loader.mock_data(key)
         budget = budget * model_param["budget_rate"]
         agent = PlayerBiddingStrategy(model_name=model_name, model_param=model_param, budget=budget, cpa=cpa, category=category)
-        print(agent.name)
         rewards = np.zeros(num_timeStepIndex)
         history = {
             'historyBids': [],
@@ -64,7 +67,7 @@ def run_test(file_path='./data/traffic/period-7.csv', model_name="dt.pt", model_
         }
 
         for timeStep_index in range(num_timeStepIndex):
-            logger.info(f'Timestep Index: {timeStep_index + 1} Begin')
+            logger.debug(f'Timestep Index: {timeStep_index + 1} Begin')
 
             pValue = pValues[timeStep_index]
             pValueSigma = pValueSigmas[timeStep_index]
@@ -104,7 +107,7 @@ def run_test(file_path='./data/traffic/period-7.csv', model_name="dt.pt", model_
             history["historyAuctionResult"].append(temAuctionResult)
             temImpressionResult = np.array([(tick_conversion[i], tick_conversion[i]) for i in range(pValue.shape[0])])
             history["historyImpressionResult"].append(temImpressionResult)
-            logger.info(f'Timestep Index: {timeStep_index + 1} End')
+            logger.debug(f'Timestep Index: {timeStep_index + 1} End')
         all_reward = np.sum(rewards)
         all_cost = agent.budget - agent.remaining_budget
         cpa_real = all_cost / (all_reward + 1e-10)

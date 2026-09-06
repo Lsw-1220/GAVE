@@ -51,6 +51,7 @@ class DtBiddingStrategy(BaseBiddingStrategy):
                                 block_config=model_param['block_config'], expectile=model_param['expectile']
                                 )
         self.model.load_net(model_path)
+        self.model.to(model_param["device"])
 
     def reset(self):
         self.remaining_budget = self.budget
